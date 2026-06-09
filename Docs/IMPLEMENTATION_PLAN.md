@@ -39,12 +39,15 @@ Expected Atera API fields:
 
 - `MachineName`
 - `CustomerName`
-- `IPAddress`
+- `IpAddresses`
+- `ReportedFromIP`
+- `MacAddresses`
+- `VendorSerialNumber`
 - `Online`
 - `LastSeen`
 - `AgentID`
 - `MachineID`
-- `DeviceGUID`
+- `DeviceGuid`
 
 Normalized Atera CSV output:
 
@@ -53,6 +56,9 @@ Normalized Atera CSV output:
   - `Device Name`
   - `Company Name`
   - `IP Address`
+  - `Reported From IP`
+  - `MAC Addresses`
+  - `Serial Number`
   - `Status`
   - `Last Seen`
   - `Atera Agent ID`
@@ -62,6 +68,8 @@ Normalized Atera CSV output:
 Rules:
 
 - Convert Atera field names into the normalized CSV column names above.
+- Use `IpAddresses` as the device IP source. `ReportedFromIP` is kept separately because it may be the public egress IP rather than the device's private/local IP.
+- Export `MacAddresses` and `VendorSerialNumber` so the compare module can later use MAC address or serial number as strong same-device evidence when BD exposes those fields.
 - Preserve the original device name exactly except trimming leading/trailing spaces.
 - Convert `Online` into a status value usable by the compare module.
 - Do not apply device aliases in this module; aliasing belongs in the compare module.
@@ -78,7 +86,8 @@ Design constraint:
 
 V1 input:
 
-- Manually downloaded Bitdefender Endpoint Protection Status CSV.
+- Manually downloaded Bitdefender Endpoint Protection Status CSV files placed in `input/`.
+- By default, the newest top-level `.csv` file in `input/` is used as the report source.
 
 Future input:
 
@@ -86,11 +95,12 @@ Future input:
 
 Required source headers for V1 manual CSV:
 
-- `Device Name`
+- `Endpoint Name`
 - `Company Name`
-- `IP Address`
-- `Status`
-- `Last Seen`
+- `IP`
+- `Update Status`
+- `Last Update`
+- `Online`
 
 Normalized BD CSV output:
 
@@ -106,6 +116,10 @@ Normalized BD CSV output:
 Rules:
 
 - Validate required headers before processing.
+- Map `Endpoint Name` to normalized `Device Name`.
+- Map `IP` to normalized `IP Address`.
+- Map the report `Online` value to normalized `Status`; timestamp values mean `Offline`, `Online` stays `Online`, and `Unmanaged` stays `Unmanaged`.
+- Map `Online` timestamp values to normalized `Last Seen`; online rows do not expose a true last-seen timestamp in the manual report.
 - Preserve the source device and company names except trimming leading/trailing spaces.
 - Add `BD Row Number` so review rows can point back to the manual BD report.
 - Do not apply aliases in this module; aliasing belongs in the compare module.
@@ -161,6 +175,8 @@ Output columns:
 Primary matching:
 
 - Match only within the same normalized company.
+- Treat a shared hardware serial number, MAC address, or Atera/BD-compatible device identifier as strong same-device evidence when both sides expose that value.
+- Treat an overlapping IPv4 address as same-device evidence only after normalizing and ignoring IPv6.
 - Normalize company and device names by trimming spaces and comparing case-insensitively.
 - Apply optional company-scoped device aliases before matching.
 - Do not automatically strip notes such as `(Datatrasfer to Alison)`; handle those through aliases.
@@ -197,7 +213,7 @@ Exception rules:
 The implementation should expose separate commands or entry points for each module:
 
 - `atera-export --output data/atera_agents.csv`
-- `bd-prepare --bd-report path\to\bd_report.csv --output data/bd_endpoint_status.csv`
+- `bd-prepare --output data/bd_endpoint_status.csv`
 - `compare --atera-csv data/atera_agents.csv --bd-csv data/bd_endpoint_status.csv --output reports/exceptions.csv --device-aliases path\to\device_aliases.csv`
 
 This keeps collection and comparison separate. The compare module should not call Atera or BD APIs directly; it should only consume normalized CSV files.

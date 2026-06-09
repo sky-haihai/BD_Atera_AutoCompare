@@ -5,26 +5,53 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from .atera_api import (
-    DEFAULT_ATERA_BASE_URL,
-    DEFAULT_PAGE_SIZE,
-    MAX_ATERA_PAGES,
-    AteraApiProvider,
-    extract_agent_items,
-    extract_int,
-)
-from .atera_mapping import convert_online_status, map_raw_agent
-from .atera_schema import (
-    ATERA_CSV_COLUMNS,
-    AteraNormalizedRow,
-    AteraProvider,
-    validate_normalized_rows,
-    write_atera_csv,
-)
+DEFAULT_OUTPUT_PATH = Path("data/atera_agents.csv")
+DEFAULT_ATERA_OUTPUT_PATH = DEFAULT_OUTPUT_PATH
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from bd_atera_autocompare.atera.api import (
+        DEFAULT_ATERA_BASE_URL,
+        DEFAULT_ATERA_USER_AGENT,
+        DEFAULT_PAGE_SIZE,
+        MAX_ATERA_PAGES,
+        AteraApiProvider,
+        extract_agent_items,
+        extract_int,
+    )
+    from bd_atera_autocompare.atera.mapping import convert_online_status, map_raw_agent
+    from bd_atera_autocompare.atera.schema import (
+        ATERA_CSV_COLUMNS,
+        AteraNormalizedRow,
+        AteraProvider,
+        validate_normalized_rows,
+        write_atera_csv,
+    )
+else:
+    from .api import (
+        DEFAULT_ATERA_BASE_URL,
+        DEFAULT_ATERA_USER_AGENT,
+        DEFAULT_PAGE_SIZE,
+        MAX_ATERA_PAGES,
+        AteraApiProvider,
+        extract_agent_items,
+        extract_int,
+    )
+    from .mapping import convert_online_status, map_raw_agent
+    from .schema import (
+        ATERA_CSV_COLUMNS,
+        AteraNormalizedRow,
+        AteraProvider,
+        validate_normalized_rows,
+        write_atera_csv,
+    )
 
 __all__ = [
     "ATERA_CSV_COLUMNS",
     "DEFAULT_ATERA_BASE_URL",
+    "DEFAULT_ATERA_OUTPUT_PATH",
+    "DEFAULT_ATERA_USER_AGENT",
+    "DEFAULT_OUTPUT_PATH",
     "DEFAULT_PAGE_SIZE",
     "MAX_ATERA_PAGES",
     "AteraApiProvider",
@@ -42,7 +69,7 @@ __all__ = [
 ]
 
 
-def export_atera_csv(provider: AteraProvider, output_path: str | Path) -> int:
+def export_atera_csv(provider: AteraProvider, output_path: str | Path = DEFAULT_OUTPUT_PATH) -> int:
     """Run an Atera provider and write the normalized CSV output."""
     rows = provider.get_rows()
     write_atera_csv(output_path, rows)
@@ -52,7 +79,12 @@ def export_atera_csv(provider: AteraProvider, output_path: str | Path) -> int:
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse command-line options for the Atera export command."""
     parser = argparse.ArgumentParser(description="Export normalized Atera agents CSV.")
-    parser.add_argument("--output", required=True, type=Path, help="Path to write the normalized Atera CSV.")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=DEFAULT_OUTPUT_PATH,
+        help=f"Path to write the normalized Atera CSV. Default: {DEFAULT_OUTPUT_PATH}.",
+    )
     parser.add_argument(
         "--http-timeout",
         type=float,
@@ -93,3 +125,4 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

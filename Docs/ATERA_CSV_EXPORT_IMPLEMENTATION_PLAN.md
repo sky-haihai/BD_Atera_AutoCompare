@@ -47,7 +47,7 @@ API 数据源：
 
 建议后续实现时把 Atera 模块独立成单一职责文件，并保留轻量共享工具：
 
-- `src/bd_atera_autocompare/atera_export.py`
+- `src/bd_atera_autocompare/atera/export.py`
   - Atera provider 协议或基类。
   - Atera API provider。
   - Atera 原始行到标准化行的映射。

@@ -11,3 +11,6 @@ dist/
 .env
 .env.*
 !.env.example
+data/*.csv
+input/*.csv
+!input/.gitkeep

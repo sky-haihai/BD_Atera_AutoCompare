@@ -10,13 +10,14 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from .env_file import load_env_file
-from .atera_mapping import map_raw_agent
-from .atera_schema import AteraNormalizedRow
-from .normalization import clean_display
+from ..env_file import load_env_file
+from ..normalization import clean_display
+from .mapping import map_raw_agent
+from .schema import AteraNormalizedRow
 
 
 DEFAULT_ATERA_BASE_URL = "https://app.atera.com/api/v3"
+DEFAULT_ATERA_USER_AGENT = "BD-Atera-AutoCompare/0.1"
 DEFAULT_PAGE_SIZE = 100
 MAX_ATERA_PAGES = 1000
 TRANSIENT_HTTP_CODES = {429, 500, 502, 503, 504}
@@ -28,6 +29,7 @@ class AteraApiProvider:
         api_key: str,
         *,
         base_url: str = DEFAULT_ATERA_BASE_URL,
+        user_agent: str = DEFAULT_ATERA_USER_AGENT,
         timeout: float = 30.0,
         page_size: int = DEFAULT_PAGE_SIZE,
         max_pages: int = MAX_ATERA_PAGES,
@@ -40,6 +42,7 @@ class AteraApiProvider:
             raise ValueError("ATERA_API_KEY is required.")
 
         self.base_url = (clean_display(base_url) or DEFAULT_ATERA_BASE_URL).rstrip("/")
+        self.user_agent = clean_display(user_agent) or DEFAULT_ATERA_USER_AGENT
         self.timeout = timeout
         self.page_size = page_size
         self.max_pages = max_pages
@@ -59,6 +62,8 @@ class AteraApiProvider:
         return cls(
             api_key=file_env.get("ATERA_API_KEY") or process_env.get("ATERA_API_KEY", ""),
             base_url=file_env.get("ATERA_BASE_URL") or process_env.get("ATERA_BASE_URL", DEFAULT_ATERA_BASE_URL),
+            user_agent=file_env.get("ATERA_USER_AGENT")
+            or process_env.get("ATERA_USER_AGENT", DEFAULT_ATERA_USER_AGENT),
             **kwargs,
         )
 
@@ -102,7 +107,11 @@ class AteraApiProvider:
         """Request one JSON payload from Atera with limited transient retries."""
         request = urllib.request.Request(
             url,
-            headers={"X-API-KEY": self.api_key, "Accept": "application/json"},
+            headers={
+                "X-API-KEY": self.api_key,
+                "Accept": "application/json",
+                "User-Agent": self.user_agent,
+            },
             method="GET",
         )
 
@@ -168,3 +177,4 @@ def extract_int(payload: Any, keys: Sequence[str]) -> int | None:
         except (TypeError, ValueError):
             continue
     return None
+

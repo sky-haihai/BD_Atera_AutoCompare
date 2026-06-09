@@ -5,13 +5,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from .csv_io import write_csv
+from ..csv_io import write_csv
 
 
 ATERA_CSV_COLUMNS = [
     "Device Name",
     "Company Name",
     "IP Address",
+    "Reported From IP",
+    "MAC Addresses",
+    "Serial Number",
     "Status",
     "Last Seen",
     "Atera Agent ID",
@@ -25,6 +28,9 @@ class AteraNormalizedRow:
     device_name: str
     company_name: str
     ip_address: str = ""
+    reported_from_ip: str = ""
+    mac_addresses: str = ""
+    serial_number: str = ""
     status: str = ""
     last_seen: str = ""
     atera_agent_id: str = ""
@@ -37,6 +43,9 @@ class AteraNormalizedRow:
             "Device Name": self.device_name,
             "Company Name": self.company_name,
             "IP Address": self.ip_address,
+            "Reported From IP": self.reported_from_ip,
+            "MAC Addresses": self.mac_addresses,
+            "Serial Number": self.serial_number,
             "Status": self.status,
             "Last Seen": self.last_seen,
             "Atera Agent ID": self.atera_agent_id,
@@ -70,3 +79,4 @@ def write_atera_csv(path: str | Path, rows: Sequence[AteraNormalizedRow]) -> Non
     """Validate and write normalized Atera rows with the stable module schema."""
     validate_normalized_rows(rows)
     write_csv(path, ATERA_CSV_COLUMNS, [row.to_csv_row() for row in rows])
+

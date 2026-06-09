@@ -10,7 +10,8 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.scripts]
-atera-export = "bd_atera_autocompare.atera_export:main"
+atera-export = "bd_atera_autocompare.atera.export:main"
+bd-prepare = "bd_atera_autocompare.bd.prepare:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

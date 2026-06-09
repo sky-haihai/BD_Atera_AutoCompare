@@ -40,7 +40,7 @@ V1 必填 source headers：
 
 ## 建议文件结构
 
-- `src/bd_atera_autocompare/bd_prepare.py`
+- `src/bd_atera_autocompare/bd/prepare.py`
   - BD provider 协议或基类。
   - 手动 BD CSV provider。
   - BD source header 校验。
@@ -119,7 +119,8 @@ V1 必填 source headers：
    - 写出 `BD Row Number`，确保人工审核能追溯原始报表。
 
 9. 实现 CLI。
-   - 命令形状：`bd-prepare --bd-report path\to\bd_report.csv --output data/bd_endpoint_status.csv`
+   - 命令形状：`bd-prepare --output data/bd_endpoint_status.csv`
+   - 默认从 `input/` 读取最新的顶层 `.csv` 文件；`--bd-report` 可用于手动指定某一份 report。
    - CLI 只负责参数解析、调用 provider、写 CSV、打印结果。
 
 ## 测试计划
@@ -137,7 +138,7 @@ V1 必填 source headers：
 
 ## 验收标准
 
-- 执行 `bd-prepare --bd-report path\to\bd_report.csv --output data/bd_endpoint_status.csv` 可以生成标准化 BD CSV。
+- 执行 `bd-prepare --output data/bd_endpoint_status.csv` 可以从 `input/` 最新 CSV 生成标准化 BD CSV。
 - 输出 CSV 包含 `BD Row Number`，并能回查到 source 报表行。
 - 模块不包含 alias、Atera API 或 compare 逻辑。
 - 测试覆盖 header 校验、row mapping、row number、CSV 写入和 CLI 基本路径。
