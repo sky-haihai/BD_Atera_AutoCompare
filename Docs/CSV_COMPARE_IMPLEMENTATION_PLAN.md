@@ -22,7 +22,7 @@ Alias CSV columns：
 
 输出示例：
 
-- `reports/exceptions.csv`
+- `reports/mismatch.csv`
 
 输出列：
 
@@ -165,11 +165,13 @@ Alias CSV columns：
     - 所有输出 row 使用固定 schema。
     - 自动创建 `reports/` 目录。
 
-## CLI 实现计划
+## 开发调试入口
 
-命令形状：
+compare 模块可以保留一个薄 CLI，方便开发时单独验证 CSV 比对逻辑，但最终用户入口是 PyInstaller 打包后的桌面 app。
 
-`compare --atera-csv data/atera_agents.csv --bd-csv data/bd_endpoint_status.csv --output reports/exceptions.csv --device-aliases path\to\device_aliases.csv`
+调试命令形状：
+
+`compare --atera-csv data/atera_agents.csv --bd-csv data/bd_endpoint_status.csv --output reports/mismatch.csv --device-aliases path\to\device_aliases.csv`
 
 参数：
 
@@ -178,7 +180,7 @@ Alias CSV columns：
 - `--output`：必填。
 - `--device-aliases`：选填。
 
-CLI 只做参数解析、调用 compare service、写 CSV、打印输出 row 数量。CLI 不调用 Atera API，也不读取原始 BD 手动报表。
+这个入口只做参数解析、调用 compare service、写 CSV、打印输出 row 数量。它不调用 Atera API，也不读取原始 BD 数据源。
 
 ## 测试计划
 
@@ -202,7 +204,7 @@ CLI 只做参数解析、调用 compare service、写 CSV、打印输出 row 数
 
 ## 验收标准
 
-- 执行 `compare --atera-csv data/atera_agents.csv --bd-csv data/bd_endpoint_status.csv --output reports/exceptions.csv` 可以生成 exception-only report。
+- 开发时执行 `compare --atera-csv data/atera_agents.csv --bd-csv data/bd_endpoint_status.csv --output reports/mismatch.csv` 可以生成 mismatch-only report。
 - compare 模块不导入 Atera API provider，也不读取原始 BD 手动报表。
 - exact matches 不出现在报告中。
 - duplicate、potential、ambiguous、missing 和 data quality 五类人工审核场景都有测试覆盖。

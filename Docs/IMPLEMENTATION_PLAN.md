@@ -145,7 +145,7 @@ Inputs:
 
 Output:
 
-- File example: `reports/exceptions.csv`
+- File example: `reports/mismatch.csv`
 
 Output columns:
 
@@ -208,15 +208,20 @@ Exception rules:
 - Suspicious pair: `Potential Match Manual Review`.
 - Bad or missing required data: `Data Quality Review`.
 
-## Planned CLI Shape
+## Packaged App Shape
 
-The implementation should expose separate commands or entry points for each module:
+The final user-facing entry point should be a PyInstaller-packaged desktop app:
 
-- `atera-export --output data/atera_agents.csv`
-- `bd-prepare --output data/bd_endpoint_status.csv`
-- `compare --atera-csv data/atera_agents.csv --bd-csv data/bd_endpoint_status.csv --output reports/exceptions.csv --device-aliases path\to\device_aliases.csv`
+- `BD_Atera_AutoCompare.exe` opens the Tkinter app.
+- The app reads `.env` from the exe folder by default.
+- The app writes standard outputs to `data/` beside the exe:
+  - `atera_agents.csv`
+  - `bd_endpoint_status.csv`
+  - `mismatch.csv`
+  - `duplicates.csv`
+- Optional alias CSVs live in the same `data/` folder.
 
-This keeps collection and comparison separate. The compare module should not call Atera or BD APIs directly; it should only consume normalized CSV files.
+The implementation can keep thin CLI wrappers for developer debugging and tests, but CLI commands are not the product surface. Collection and comparison should still stay separated internally. The compare module should not call Atera or BD APIs directly; it should only consume normalized CSV files.
 
 ## Code Design Principles
 

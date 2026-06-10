@@ -6,12 +6,22 @@ build-backend = "setuptools.build_meta"
 name = "bd-atera-autocompare"
 version = "0.1.0"
 description = "Normalize Atera and Bitdefender endpoint CSV data for comparison."
+readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "tzdata; platform_system == 'Windows'",
+]
+
+[project.optional-dependencies]
+build = [
+    "pyinstaller>=6",
+]
 
 [project.scripts]
 atera-export = "bd_atera_autocompare.atera.export:main"
 bd-prepare = "bd_atera_autocompare.bd.prepare:main"
+compare = "bd_atera_autocompare.compare:main"
+bd-atera-autocompare = "bd_atera_autocompare.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

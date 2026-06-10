@@ -1,5 +1,6 @@
 __pycache__/
 *.py[cod]
+.venv/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -12,5 +13,3 @@ dist/
 .env.*
 !.env.example
 data/*.csv
-input/*.csv
-!input/.gitkeep

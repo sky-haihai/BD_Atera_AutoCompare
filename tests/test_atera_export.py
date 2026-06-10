@@ -149,6 +149,26 @@ class AteraExportTests(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["Device Name"], "PC01")
 
+    def test_write_atera_csv_sorts_by_company_and_device(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "atera_agents.csv"
+            atera_schema.write_atera_csv(
+                output,
+                [
+                    atera_mapping.map_raw_agent(raw_agent(machine_name="PC-Z", customer_name="Zoo")),
+                    atera_mapping.map_raw_agent(raw_agent(machine_name="PC-C", customer_name="Acme")),
+                    atera_mapping.map_raw_agent(raw_agent(machine_name="PC-A", customer_name="Acme")),
+                ],
+            )
+
+            with output.open("r", encoding="utf-8-sig", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+
+        self.assertEqual(
+            [(row["Company Name"], row["Device Name"]) for row in rows],
+            [("Acme", "PC-A"), ("Acme", "PC-C"), ("Zoo", "PC-Z")],
+        )
+
     def test_validate_normalized_rows_requires_device_and_company(self) -> None:
         rows = [atera_schema.AteraNormalizedRow(device_name="", company_name="Acme")]
 

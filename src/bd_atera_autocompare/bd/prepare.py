@@ -1,24 +1,33 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
 DEFAULT_OUTPUT_PATH = Path("data/bd_endpoint_status.csv")
 DEFAULT_BD_OUTPUT_PATH = DEFAULT_OUTPUT_PATH
-DEFAULT_INPUT_DIR = Path("input")
-DEFAULT_BD_SOURCE = "report"
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from bd_atera_autocompare.bd.api import (
+        DEFAULT_BD_API_URL,
+        DEFAULT_BD_USER_AGENT,
+        DEFAULT_PAGE_SIZE,
+        MAX_BD_PAGES,
+        BdApiProvider,
+        build_company_names_by_id,
+        extract_endpoint_items,
+        extract_inventory_items,
+        extract_result,
+        filter_export_endpoint_items,
+        filter_endpoint_items,
+    )
     from bd_atera_autocompare.bd.mapping import (
-        BD_REPORT_REQUIRED_HEADERS,
-        convert_bd_online_status,
-        is_bd_report_timestamp,
-        map_bd_last_seen,
-        map_bd_report_row,
+        bool_display,
+        endpoint_status,
+        join_display_values,
+        map_inventory_endpoint_item,
     )
     from bd_atera_autocompare.bd.schema import (
         BD_CSV_COLUMNS,
@@ -26,14 +35,25 @@ if __package__ in {None, ""}:
         BdProvider,
         write_bd_csv,
     )
-    from bd_atera_autocompare.csv_io import require_headers
 else:
+    from .api import (
+        DEFAULT_BD_API_URL,
+        DEFAULT_BD_USER_AGENT,
+        DEFAULT_PAGE_SIZE,
+        MAX_BD_PAGES,
+        BdApiProvider,
+        build_company_names_by_id,
+        extract_endpoint_items,
+        extract_inventory_items,
+        extract_result,
+        filter_export_endpoint_items,
+        filter_endpoint_items,
+    )
     from .mapping import (
-        BD_REPORT_REQUIRED_HEADERS,
-        convert_bd_online_status,
-        is_bd_report_timestamp,
-        map_bd_last_seen,
-        map_bd_report_row,
+        bool_display,
+        endpoint_status,
+        join_display_values,
+        map_inventory_endpoint_item,
     )
     from .schema import (
         BD_CSV_COLUMNS,
@@ -41,66 +61,33 @@ else:
         BdProvider,
         write_bd_csv,
     )
-    from ..csv_io import require_headers
 
 __all__ = [
     "BD_CSV_COLUMNS",
-    "BD_REPORT_REQUIRED_HEADERS",
+    "DEFAULT_BD_API_URL",
     "DEFAULT_BD_OUTPUT_PATH",
-    "DEFAULT_BD_SOURCE",
-    "DEFAULT_INPUT_DIR",
+    "DEFAULT_BD_USER_AGENT",
     "DEFAULT_OUTPUT_PATH",
+    "DEFAULT_PAGE_SIZE",
+    "MAX_BD_PAGES",
     "BdApiProvider",
     "BdNormalizedRow",
     "BdProvider",
-    "ManualBdReportProvider",
-    "convert_bd_online_status",
-    "is_bd_report_timestamp",
-    "find_latest_report_csv",
+    "bool_display",
+    "build_company_names_by_id",
+    "endpoint_status",
+    "extract_endpoint_items",
+    "extract_inventory_items",
+    "extract_result",
+    "filter_export_endpoint_items",
+    "filter_endpoint_items",
+    "join_display_values",
     "main",
-    "map_bd_last_seen",
-    "map_bd_report_row",
+    "map_inventory_endpoint_item",
     "parse_args",
     "prepare_bd_csv",
     "write_bd_csv",
 ]
-
-
-class ManualBdReportProvider:
-    def __init__(self, report_path: str | Path) -> None:
-        self.report_path = Path(report_path)
-
-    def get_rows(self) -> list[BdNormalizedRow]:
-        """Read a manual Bitdefender report CSV and return normalized rows."""
-        with self.report_path.open("r", encoding="utf-8-sig", newline="") as handle:
-            reader = csv.DictReader(handle)
-            require_headers(reader.fieldnames, BD_REPORT_REQUIRED_HEADERS, self.report_path)
-            rows: list[BdNormalizedRow] = []
-            for source_row in reader:
-                if is_empty_source_row(source_row):
-                    continue
-                rows.append(map_bd_report_row(source_row, reader.line_num))
-        return rows
-
-
-class BdApiProvider:
-    def get_rows(self) -> list[BdNormalizedRow]:
-        """Placeholder for the future Bitdefender Reports API implementation."""
-        raise NotImplementedError("Bitdefender Reports API source is not implemented yet. Use --source report.")
-
-
-def is_empty_source_row(source_row: dict[str | None, object]) -> bool:
-    """Return whether DictReader produced a row with no meaningful values."""
-    return not any(str(value or "").strip() for key, value in source_row.items() if key is not None)
-
-
-def find_latest_report_csv(input_dir: str | Path = DEFAULT_INPUT_DIR) -> Path:
-    """Return the newest CSV file from the BD report input directory."""
-    directory = Path(input_dir)
-    candidates = [path for path in directory.glob("*.csv") if path.is_file()]
-    if not candidates:
-        raise FileNotFoundError(f"No CSV report files found in {directory}.")
-    return max(candidates, key=lambda path: (path.stat().st_mtime_ns, path.name.casefold()))
 
 
 def prepare_bd_csv(provider: BdProvider, output_path: str | Path = DEFAULT_OUTPUT_PATH) -> int:
@@ -112,42 +99,89 @@ def prepare_bd_csv(provider: BdProvider, output_path: str | Path = DEFAULT_OUTPU
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse command-line options for the BD prepare command."""
-    parser = argparse.ArgumentParser(description="Prepare normalized Bitdefender endpoint CSV.")
-    parser.add_argument(
-        "--source",
-        choices=("report", "api"),
-        default=DEFAULT_BD_SOURCE,
-        help=f"BD data source to use. Default: {DEFAULT_BD_SOURCE}.",
-    )
-    parser.add_argument(
-        "--bd-report",
-        type=Path,
-        help=f"Path to the manually downloaded Bitdefender report CSV. Defaults to newest CSV in {DEFAULT_INPUT_DIR}.",
-    )
-    parser.add_argument(
-        "--input-dir",
-        type=Path,
-        default=DEFAULT_INPUT_DIR,
-        help=f"Folder containing manual Bitdefender report CSV files. Default: {DEFAULT_INPUT_DIR}.",
-    )
+    parser = argparse.ArgumentParser(description="Export normalized Bitdefender getNetworkInventoryItems CSV.")
     parser.add_argument(
         "--output",
         type=Path,
         default=DEFAULT_OUTPUT_PATH,
         help=f"Path to write the normalized BD CSV. Default: {DEFAULT_OUTPUT_PATH}.",
     )
+    parser.add_argument(
+        "--env-file",
+        type=Path,
+        default=Path(".env"),
+        help="Path to the local .env file. Default: .env.",
+    )
+    parser.add_argument(
+        "--api-url",
+        default="",
+        help=f"Bitdefender Network API JSON-RPC URL. Default: {DEFAULT_BD_API_URL}.",
+    )
+    parser.add_argument(
+        "--http-timeout",
+        type=float,
+        default=30.0,
+        help="Bitdefender API HTTP timeout in seconds. Default: 30.",
+    )
+    parser.add_argument(
+        "--page-size",
+        type=int,
+        default=DEFAULT_PAGE_SIZE,
+        help=f"Bitdefender API page size. Default: {DEFAULT_PAGE_SIZE}.",
+    )
+    parser.add_argument(
+        "--parent-id",
+        default="",
+        help="Optional Bitdefender company or group ID passed as getNetworkInventoryItems parentId.",
+    )
+    parser.add_argument(
+        "--company-name",
+        default="",
+        help="Optional company name to stamp onto rows when inventory companyId cannot be resolved.",
+    )
+    parser.add_argument(
+        "--no-recursive",
+        action="store_true",
+        help="Do not set filters.depth.allItemsRecursively=true in getNetworkInventoryItems.",
+    )
+    parser.add_argument(
+        "--no-product-outdated",
+        action="store_true",
+        help="Do not request the productOutdated option.",
+    )
+    parser.add_argument(
+        "--no-scan-logs",
+        action="store_true",
+        help="Do not request the lastSuccessfulScan option.",
+    )
+    parser.add_argument(
+        "--include-unprotected",
+        action="store_true",
+        help=(
+            "Compatibility option; BD CSV now includes all endpoint inventory and compare decides how to use it."
+        ),
+    )
     return parser.parse_args(argv)
 
 
 def provider_from_args(args: argparse.Namespace) -> BdProvider:
     """Build the selected BD provider from parsed CLI arguments."""
-    if args.source == "api":
-        return BdApiProvider()
-
-    if args.bd_report is None:
-        return ManualBdReportProvider(find_latest_report_csv(args.input_dir))
-
-    return ManualBdReportProvider(args.bd_report)
+    provider_kwargs = {
+        "env_file": args.env_file,
+        "timeout": args.http_timeout,
+        "page_size": args.page_size,
+        "recursive": not args.no_recursive,
+        "return_product_outdated": not args.no_product_outdated,
+        "include_scan_logs": not args.no_scan_logs,
+        "include_unprotected": args.include_unprotected,
+    }
+    if args.api_url:
+        provider_kwargs["api_url"] = args.api_url
+    if args.parent_id:
+        provider_kwargs["parent_id"] = args.parent_id
+    if args.company_name:
+        provider_kwargs["company_name"] = args.company_name
+    return BdApiProvider.from_environment(**provider_kwargs)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
