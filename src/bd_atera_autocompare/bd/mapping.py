@@ -55,6 +55,16 @@ def endpoint_status(details: Mapping[str, Any]) -> str:
     return ""
 
 
+def endpoint_last_seen(item: Mapping[str, Any], details: Mapping[str, Any]) -> str:
+    """Return the first known last-seen timestamp exposed by BD inventory."""
+    for source in (details, item):
+        for key in ("lastSeen", "lastSeenDate", "lastUpdate", "lastStatusUpdate"):
+            value = clean_display(source.get(key))
+            if value:
+                return value
+    return ""
+
+
 def endpoint_company_name(
     item: Mapping[str, Any],
     details: Mapping[str, Any],
@@ -103,13 +113,16 @@ def map_inventory_endpoint_item(
     details = network_item_details(item)
     policy = nested_mapping(details.get("policy"))
     moving_info = nested_mapping(details.get("movingInfo"))
-    last_successful_scan = nested_mapping(details.get("lastSuccessfulScan"))
+    last_successful_scan = nested_mapping(details.get("lastSuccessfulScan")) or nested_mapping(
+        item.get("lastSuccessfulScan")
+    )
 
     return BdNormalizedRow(
         device_name=clean_display(item.get("name")),
         company_name=endpoint_company_name(item, details, company_names_by_id, fallback_company_name),
         ip_address=clean_display(details.get("ip")),
         status=endpoint_status(details),
+        last_seen=endpoint_last_seen(item, details),
         bd_endpoint_id=clean_display(item.get("id")),
         bd_company_id=clean_display(item.get("companyId")),
         parent_id=clean_display(item.get("parentId")),

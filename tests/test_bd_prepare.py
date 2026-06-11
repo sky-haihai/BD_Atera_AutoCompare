@@ -49,6 +49,7 @@ def endpoint_item(
             "managedExchangeServer": False,
             "managedRelay": False,
             "securityServer": False,
+            "lastSeen": "2026-06-10T15:20:30+00:00",
             "policy": {
                 "id": "policy-1",
                 "name": "Default",
@@ -138,6 +139,26 @@ def custom_groups_payload(items: list[dict[str, object]] | None = None) -> dict[
     }
 
 
+def endpoint_details_payload(last_seen: str = "2026-06-11T13:45:00+00:00") -> dict[str, object]:
+    return {
+        "jsonrpc": "2.0",
+        "id": "test",
+        "error": None,
+        "result": {
+            "id": "bd-1",
+            "lastSeen": last_seen,
+        },
+    }
+
+
+def jsonrpc_error_payload(message: str) -> dict[str, object]:
+    return {
+        "jsonrpc": "2.0",
+        "id": "test",
+        "error": {"code": -32602, "message": message},
+    }
+
+
 class BdPrepareTests(unittest.TestCase):
     def test_map_endpoint_item_uses_network_inventory_fields(self) -> None:
         row = bd_mapping.map_inventory_endpoint_item(
@@ -149,6 +170,7 @@ class BdPrepareTests(unittest.TestCase):
         self.assertEqual(row.company_name, "Acme")
         self.assertEqual(row.ip_address, "10.0.0.1")
         self.assertEqual(row.status, "Managed With BEST")
+        self.assertEqual(row.last_seen, "2026-06-10T15:20:30+00:00")
         self.assertEqual(row.mac_addresses, "00:11:22:33:44:55; AA:BB:CC:DD:EE:FF")
         self.assertEqual(row.bd_endpoint_id, "bd-1")
         self.assertEqual(row.bd_company_id, "company-1")
@@ -203,6 +225,28 @@ class BdPrepareTests(unittest.TestCase):
         self.assertEqual(row.status, "Managed")
         self.assertEqual(row.is_managed, "true")
         self.assertEqual(row.managed_with_best, "")
+
+    def test_map_endpoint_item_uses_item_level_last_seen_fallback(self) -> None:
+        item = endpoint_item()
+        details = item["details"]
+        assert isinstance(details, dict)
+        details.pop("lastSeen")
+        item["lastSeen"] = "2026-06-11T13:45:00+00:00"
+
+        row = bd_mapping.map_inventory_endpoint_item(item, {"company-1": "Acme"})
+
+        self.assertEqual(row.last_seen, "2026-06-11T13:45:00+00:00")
+
+    def test_map_endpoint_item_uses_item_level_last_successful_scan_fallback(self) -> None:
+        item = endpoint_item()
+        details = item["details"]
+        assert isinstance(details, dict)
+        item["lastSuccessfulScan"] = details.pop("lastSuccessfulScan")
+
+        row = bd_mapping.map_inventory_endpoint_item(item, {"company-1": "Acme"})
+
+        self.assertEqual(row.last_successful_scan_name, "Quick Scan")
+        self.assertEqual(row.last_successful_scan_date, "2026-06-09T19:55:34+00:00")
 
     def test_company_name_map_comes_from_inventory_company_items(self) -> None:
         string_type_company = {**company_item("company-2", "Beta"), "type": "1"}
@@ -393,6 +437,57 @@ class BdPrepareTests(unittest.TestCase):
         self.assertEqual([row.device_name for row in rows], ["WITH-BEST", "MANAGED-UNKNOWN-BEST", "NO-BEST"])
         self.assertEqual(rows[1].status, "Managed")
         self.assertEqual(rows[2].status, "No BEST")
+
+    def test_provider_enriches_missing_last_seen_from_managed_endpoint_details(self) -> None:
+        item = endpoint_item()
+        details = item["details"]
+        assert isinstance(details, dict)
+        details.pop("lastSeen")
+        urlopen = FakeUrlopen(
+            [
+                api_payload([company_item(), item]),
+                custom_groups_payload(),
+                endpoint_details_payload("2026-06-11T13:45:00+00:00"),
+            ]
+        )
+        provider = bd_api.BdApiProvider(
+            api_key="secret",
+            parent_id="company-1",
+            company_name="Acme",
+            urlopen=urlopen,
+        )
+
+        rows = provider.get_rows()
+
+        self.assertEqual(rows[0].last_seen, "2026-06-11T13:45:00+00:00")
+        details_body = json.loads(urlopen.requests[2].data.decode("utf-8"))
+        self.assertEqual(details_body["method"], "getManagedEndpointDetails")
+        self.assertEqual(details_body["params"], {"endpointId": "bd-1"})
+
+    def test_provider_keeps_row_when_last_seen_detail_request_has_invalid_params(self) -> None:
+        item = endpoint_item()
+        details = item["details"]
+        assert isinstance(details, dict)
+        details.pop("lastSeen")
+        urlopen = FakeUrlopen(
+            [
+                api_payload([company_item(), item]),
+                custom_groups_payload(),
+                jsonrpc_error_payload("Invalid params"),
+            ]
+        )
+        provider = bd_api.BdApiProvider(
+            api_key="secret",
+            parent_id="company-1",
+            company_name="Acme",
+            urlopen=urlopen,
+        )
+
+        rows = provider.get_rows()
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].device_name, "PC01")
+        self.assertEqual(rows[0].last_seen, "")
 
     def test_provider_include_unprotected_flag_is_kept_for_compatibility(self) -> None:
         urlopen = FakeUrlopen(

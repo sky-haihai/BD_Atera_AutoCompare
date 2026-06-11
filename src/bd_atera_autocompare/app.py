@@ -5,12 +5,28 @@ import sys
 import threading
 from pathlib import Path
 
+from .compare import COMPANY_ALIAS_COLUMNS, DEVICE_ALIAS_COLUMNS, EXCLUDE_COMPANY_COLUMNS
+from .csv_io import write_csv
 from .pipeline import PipelineResult, PipelineSettings, run_pipeline
 
 tk = None
 ttk = None
 filedialog = None
 messagebox = None
+
+DEFAULT_COMPANY_ALIAS_ROW = {
+    "Atera Company Name": "Example Atera Name",
+    "BD Company Name": "Example Bitdefender Name",
+}
+DEFAULT_DEVICE_ALIAS_ROW = {
+    "Company Name": "Example Bitdefender Name",
+    "Raw Device Name": "DESKTOP-123",
+    "Canonical Device Name": "Accounting-01",
+}
+DEFAULT_EXCLUDE_COMPANY_ROW = {
+    "Company Name": "Example Bitdefender Name",
+    "ExcludeSoftware": "BD",
+}
 
 
 def app_base_dir() -> Path:
@@ -21,16 +37,31 @@ def app_base_dir() -> Path:
 
 def default_settings_for_base_dir(base_dir: Path | None = None) -> PipelineSettings:
     base_path = Path(base_dir) if base_dir is not None else app_base_dir()
-    data_dir = base_path / "data"
+    config_dir = base_path / "config"
+    output_dir = base_path / "output"
     return PipelineSettings(
         env_file=base_path / ".env",
-        atera_output=data_dir / "atera_agents.csv",
-        bd_output=data_dir / "bd_endpoint_status.csv",
-        report_output=data_dir / "mismatch.csv",
-        duplicates_output=data_dir / "duplicates.csv",
-        company_aliases=data_dir / "company_aliases.csv",
-        device_aliases=data_dir / "device_aliases.csv",
+        atera_output=output_dir / "atera_agents.csv",
+        bd_output=output_dir / "bd_endpoint_status.csv",
+        report_output=output_dir / "mismatch.csv",
+        duplicates_output=output_dir / "duplicates.csv",
+        company_aliases=config_dir / "company_aliases.csv",
+        device_aliases=config_dir / "device_aliases.csv",
+        exclude_company=config_dir / "exclude_company.csv",
     )
+
+
+def create_config_csv_if_missing(path: Path | None, columns: list[str], placeholder_row: dict[str, str]) -> bool:
+    if path is None or path.exists():
+        return False
+    write_csv(path, columns, [placeholder_row], sort_rows=False)
+    return True
+
+
+def ensure_default_config_csvs(settings: PipelineSettings) -> None:
+    create_config_csv_if_missing(settings.company_aliases, COMPANY_ALIAS_COLUMNS, DEFAULT_COMPANY_ALIAS_ROW)
+    create_config_csv_if_missing(settings.device_aliases, DEVICE_ALIAS_COLUMNS, DEFAULT_DEVICE_ALIAS_ROW)
+    create_config_csv_if_missing(settings.exclude_company, EXCLUDE_COMPANY_COLUMNS, DEFAULT_EXCLUDE_COMPANY_ROW)
 
 
 def load_tkinter() -> None:
@@ -65,13 +96,14 @@ class AutoCompareApp:
 
         self.env_file = tk.StringVar(value=str(defaults.env_file))
         self.output_dir = tk.StringVar(value=str(defaults.atera_output.parent))
-        self.atera_page_size = tk.StringVar(value=str(defaults.atera_page_size))
-        self.bd_page_size = tk.StringVar(value=str(defaults.bd_page_size))
+        self.company_aliases = tk.StringVar(value=str(defaults.company_aliases or ""))
+        self.device_aliases = tk.StringVar(value=str(defaults.device_aliases or ""))
+        self.exclude_company = tk.StringVar(value=str(defaults.exclude_company or ""))
         self.include_unprotected = tk.BooleanVar(value=defaults.bd_include_unprotected)
         self.status = tk.StringVar(value="Ready")
 
         self.root.title("BD / Atera AutoCompare")
-        self.root.minsize(760, 520)
+        self.root.minsize(820, 620)
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(1, weight=1)
 
@@ -92,32 +124,61 @@ class AutoCompareApp:
         ttk.Entry(frame, textvariable=self.output_dir).grid(row=1, column=1, sticky="ew", pady=4)
         ttk.Button(frame, text="Browse", command=self.choose_output_dir).grid(row=1, column=2, padx=(8, 0), pady=4)
 
-        options = ttk.Frame(frame)
-        options.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(8, 0))
-        options.columnconfigure(4, weight=1)
-
-        ttk.Label(options, text="Atera page").grid(row=0, column=0, sticky="w")
-        ttk.Spinbox(options, from_=1, to=500, textvariable=self.atera_page_size, width=8).grid(
-            row=0,
-            column=1,
-            sticky="w",
-            padx=(8, 18),
+        ttk.Label(frame, text="Company aliases").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=4)
+        ttk.Entry(frame, textvariable=self.company_aliases).grid(row=2, column=1, sticky="ew", pady=4)
+        ttk.Button(frame, text="Browse", command=self.choose_company_aliases).grid(
+            row=2,
+            column=2,
+            padx=(8, 0),
+            pady=4,
         )
-        ttk.Label(options, text="BD page").grid(row=0, column=2, sticky="w")
-        ttk.Spinbox(options, from_=1, to=500, textvariable=self.bd_page_size, width=8).grid(
-            row=0,
+        ttk.Button(frame, text="Create", command=self.create_company_aliases).grid(
+            row=2,
             column=3,
-            sticky="w",
-            padx=(8, 18),
+            padx=(8, 0),
+            pady=4,
         )
+
+        ttk.Label(frame, text="Device aliases").grid(row=3, column=0, sticky="w", padx=(0, 8), pady=4)
+        ttk.Entry(frame, textvariable=self.device_aliases).grid(row=3, column=1, sticky="ew", pady=4)
+        ttk.Button(frame, text="Browse", command=self.choose_device_aliases).grid(
+            row=3,
+            column=2,
+            padx=(8, 0),
+            pady=4,
+        )
+        ttk.Button(frame, text="Create", command=self.create_device_aliases).grid(
+            row=3,
+            column=3,
+            padx=(8, 0),
+            pady=4,
+        )
+
+        ttk.Label(frame, text="Exclude company").grid(row=4, column=0, sticky="w", padx=(0, 8), pady=4)
+        ttk.Entry(frame, textvariable=self.exclude_company).grid(row=4, column=1, sticky="ew", pady=4)
+        ttk.Button(frame, text="Browse", command=self.choose_exclude_company).grid(
+            row=4,
+            column=2,
+            padx=(8, 0),
+            pady=4,
+        )
+        ttk.Button(frame, text="Create", command=self.create_exclude_company).grid(
+            row=4,
+            column=3,
+            padx=(8, 0),
+            pady=4,
+        )
+
+        options = ttk.Frame(frame)
+        options.grid(row=5, column=0, columnspan=4, sticky="ew", pady=(8, 0))
         ttk.Checkbutton(
             options,
             text="Include unprotected BD endpoints",
             variable=self.include_unprotected,
-        ).grid(row=0, column=4, sticky="w")
+        ).grid(row=0, column=0, sticky="w")
 
         actions = ttk.Frame(frame)
-        actions.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(14, 0))
+        actions.grid(row=6, column=0, columnspan=4, sticky="ew", pady=(14, 0))
         actions.columnconfigure(1, weight=1)
         self.run_button = ttk.Button(actions, text="Run", command=self.start_run)
         self.run_button.grid(row=0, column=0, sticky="w")
@@ -149,19 +210,87 @@ class AutoCompareApp:
         if selected:
             self.output_dir.set(selected)
 
+    def choose_csv_file(self, title: str, variable) -> None:
+        current_path = Path(variable.get()) if variable.get() else self.base_dir / "config"
+        selected = filedialog.askopenfilename(
+            title=title,
+            initialdir=str(current_path.parent),
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+        )
+        if selected:
+            variable.set(selected)
+
+    def choose_company_aliases(self) -> None:
+        self.choose_csv_file("Select company aliases CSV", self.company_aliases)
+
+    def choose_device_aliases(self) -> None:
+        self.choose_csv_file("Select device aliases CSV", self.device_aliases)
+
+    def choose_exclude_company(self) -> None:
+        self.choose_csv_file("Select exclude company CSV", self.exclude_company)
+
+    def create_config_csv(
+        self,
+        variable,
+        columns: list[str],
+        placeholder_row: dict[str, str],
+        label: str,
+    ) -> None:
+        path_text = variable.get().strip()
+        if not path_text:
+            messagebox.showerror("BD / Atera AutoCompare", f"Set a {label} CSV path first.")
+            return
+
+        path = Path(path_text)
+        if path.exists():
+            messagebox.showinfo("BD / Atera AutoCompare", f"{label} already exists:\n{path}")
+            return
+
+        try:
+            create_config_csv_if_missing(path, columns, placeholder_row)
+        except Exception as exc:
+            messagebox.showerror("BD / Atera AutoCompare", f"Could not create {label}:\n{exc}")
+            return
+
+        self.log_message(f"Created {label}: {path}")
+        messagebox.showinfo("BD / Atera AutoCompare", f"Created {label}:\n{path}")
+
+    def create_company_aliases(self) -> None:
+        self.create_config_csv(
+            self.company_aliases,
+            COMPANY_ALIAS_COLUMNS,
+            DEFAULT_COMPANY_ALIAS_ROW,
+            "company aliases CSV",
+        )
+
+    def create_device_aliases(self) -> None:
+        self.create_config_csv(
+            self.device_aliases,
+            DEVICE_ALIAS_COLUMNS,
+            DEFAULT_DEVICE_ALIAS_ROW,
+            "device aliases CSV",
+        )
+
+    def create_exclude_company(self) -> None:
+        self.create_config_csv(
+            self.exclude_company,
+            EXCLUDE_COMPANY_COLUMNS,
+            DEFAULT_EXCLUDE_COMPANY_ROW,
+            "exclude company CSV",
+        )
+
     def build_settings(self) -> PipelineSettings:
         output_path = Path(self.output_dir.get())
         return PipelineSettings(
             env_file=Path(self.env_file.get()),
             atera_output=output_path / "atera_agents.csv",
-            atera_page_size=int(self.atera_page_size.get()),
             bd_output=output_path / "bd_endpoint_status.csv",
-            bd_page_size=int(self.bd_page_size.get()),
             bd_include_unprotected=self.include_unprotected.get(),
             report_output=output_path / "mismatch.csv",
             duplicates_output=output_path / "duplicates.csv",
-            company_aliases=output_path / "company_aliases.csv",
-            device_aliases=output_path / "device_aliases.csv",
+            company_aliases=Path(self.company_aliases.get()) if self.company_aliases.get() else None,
+            device_aliases=Path(self.device_aliases.get()) if self.device_aliases.get() else None,
+            exclude_company=Path(self.exclude_company.get()) if self.exclude_company.get() else None,
         )
 
     def start_run(self) -> None:

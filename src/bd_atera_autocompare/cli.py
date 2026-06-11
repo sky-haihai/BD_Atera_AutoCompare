@@ -15,6 +15,7 @@ from .pipeline import (
     DEFAULT_COMPARE_OUTPUT_PATH,
     DEFAULT_DEVICE_ALIASES_PATH,
     DEFAULT_DUPLICATES_OUTPUT_PATH,
+    DEFAULT_EXCLUDE_COMPANY_PATH,
     PipelineResult,
     PipelineSettings,
     bd_provider_from_settings,
@@ -129,6 +130,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             f"Default: {DEFAULT_DEVICE_ALIASES_PATH} if it exists."
         ),
     )
+    parser.add_argument(
+        "--exclude-company",
+        type=Path,
+        default=DEFAULT_EXCLUDE_COMPANY_PATH,
+        help=(
+            "Optional company exclusion CSV with Company Name and ExcludeSoftware columns. "
+            f"Default: {DEFAULT_EXCLUDE_COMPANY_PATH} if it exists."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -151,6 +161,7 @@ def settings_from_args(args: argparse.Namespace) -> PipelineSettings:
         duplicates_output=args.duplicates_output,
         company_aliases=args.company_aliases,
         device_aliases=args.device_aliases,
+        exclude_company=args.exclude_company,
     )
 
 

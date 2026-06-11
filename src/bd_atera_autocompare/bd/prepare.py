@@ -5,7 +5,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-DEFAULT_OUTPUT_PATH = Path("data/bd_endpoint_status.csv")
+DEFAULT_OUTPUT_PATH = Path("output/bd_endpoint_status.csv")
 DEFAULT_BD_OUTPUT_PATH = DEFAULT_OUTPUT_PATH
 
 if __package__ in {None, ""}:

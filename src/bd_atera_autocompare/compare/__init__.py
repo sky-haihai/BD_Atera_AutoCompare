@@ -17,12 +17,13 @@ from ..csv_io import require_headers, write_csv
 from ..normalization import clean_display
 
 
-DEFAULT_ATERA_CSV_PATH = Path("data/atera_agents.csv")
-DEFAULT_BD_CSV_PATH = Path("data/bd_endpoint_status.csv")
-DEFAULT_OUTPUT_PATH = Path("data/mismatch.csv")
-DEFAULT_DUPLICATES_OUTPUT_PATH = Path("data/duplicates.csv")
-DEFAULT_COMPANY_ALIASES_PATH = Path("data/company_aliases.csv")
-DEFAULT_DEVICE_ALIASES_PATH = Path("data/device_aliases.csv")
+DEFAULT_ATERA_CSV_PATH = Path("output/atera_agents.csv")
+DEFAULT_BD_CSV_PATH = Path("output/bd_endpoint_status.csv")
+DEFAULT_OUTPUT_PATH = Path("output/mismatch.csv")
+DEFAULT_DUPLICATES_OUTPUT_PATH = Path("output/duplicates.csv")
+DEFAULT_COMPANY_ALIASES_PATH = Path("config/company_aliases.csv")
+DEFAULT_DEVICE_ALIASES_PATH = Path("config/device_aliases.csv")
+DEFAULT_EXCLUDE_COMPANY_PATH = Path("config/exclude_company.csv")
 DEFAULT_LOCAL_TIME_ZONE = ZoneInfo("America/Edmonton")
 NAME_SIMILARITY_THRESHOLD = 0.80
 OFFLINE_LAST_SEEN_WINDOW = timedelta(minutes=60)
@@ -45,6 +46,21 @@ DEVICE_ALIAS_COLUMNS = [
     "Raw Device Name",
     "Canonical Device Name",
 ]
+
+EXCLUDE_COMPANY_COLUMNS = [
+    "Company Name",
+    "ExcludeSoftware",
+]
+
+SOFTWARE_ATERA = "atera"
+SOFTWARE_BD = "bd"
+EXCLUDE_SOFTWARE_ALIASES = {
+    "atera": SOFTWARE_ATERA,
+    "atera agent": SOFTWARE_ATERA,
+    "bd": SOFTWARE_BD,
+    "bitdefender": SOFTWARE_BD,
+    "bitdefender endpoint protection": SOFTWARE_BD,
+}
 
 COMPARE_REPORT_COLUMNS = [
     "Atera Device Name",
@@ -563,6 +579,69 @@ def read_device_aliases(
     return aliases, data_quality_rows
 
 
+def normalize_exclude_software(value: object) -> str | None:
+    return EXCLUDE_SOFTWARE_ALIASES.get(normalize_key(value))
+
+
+def read_exclude_company(
+    path: str | Path | None,
+    company_aliases: Mapping[str, str],
+) -> tuple[dict[str, set[str]], list[dict[str, str]]]:
+    if path is None:
+        return {}, []
+
+    exclude_path = Path(path)
+    if not exclude_path.exists():
+        return {}, []
+
+    excluded: dict[str, set[str]] = defaultdict(set)
+    data_quality_rows: list[dict[str, str]] = []
+    for row, line_number in read_csv_rows(exclude_path, EXCLUDE_COMPANY_COLUMNS):
+        company = clean_display(row.get("Company Name"))
+        exclude_software = clean_display(row.get("ExcludeSoftware"))
+        missing = []
+        if not company:
+            missing.append("Company Name")
+        if not exclude_software:
+            missing.append("ExcludeSoftware")
+
+        software_key = normalize_exclude_software(exclude_software)
+        invalid_software = bool(exclude_software and software_key is None)
+        if missing or invalid_software:
+            issues = []
+            if missing:
+                issues.append(f"missing required value(s): {', '.join(missing)}")
+            if invalid_software:
+                issues.append("ExcludeSoftware must be Atera or BD")
+            data_quality_rows.append(
+                build_data_quality_row(
+                    company=canonicalize_company_for_alias_file(company, company_aliases) if company else "",
+                    notes=f"{exclude_path} row {line_number} {'; '.join(issues)}",
+                )
+            )
+            continue
+
+        canonical_company = canonicalize_company_for_alias_file(company, company_aliases)
+        excluded[normalize_key(canonical_company)].add(software_key)
+    return dict(excluded), data_quality_rows
+
+
+def company_excludes_software(
+    company: str,
+    software: str,
+    excluded_software_by_company: Mapping[str, set[str]],
+) -> bool:
+    return software in excluded_software_by_company.get(normalize_key(company), set())
+
+
+def any_record_excludes_software(
+    records: Sequence[EndpointRecord],
+    software: str,
+    excluded_software_by_company: Mapping[str, set[str]],
+) -> bool:
+    return any(company_excludes_software(record.company, software, excluded_software_by_company) for record in records)
+
+
 def canonical_company_for_record(source: str, raw_company: str, company_aliases: Mapping[str, str]) -> tuple[str, bool]:
     if source != "atera":
         return raw_company, False
@@ -740,6 +819,7 @@ def ordered_group_keys(
 def classify_primary_matches(
     atera_records: Sequence[EndpointRecord],
     bd_records: Sequence[EndpointRecord],
+    excluded_software_by_company: Mapping[str, set[str]],
 ) -> tuple[list[dict[str, str]], set[EndpointRecord], set[EndpointRecord]]:
     atera_groups = group_records(atera_records)
     bd_groups = group_records(bd_records)
@@ -754,7 +834,11 @@ def classify_primary_matches(
         has_duplicate = len(atera_group) > 1 or len(bd_group) > 1
 
         if is_exact_single_match:
-            if bd_missing_best(bd_group[0]):
+            if bd_missing_best(bd_group[0]) and not any_record_excludes_software(
+                atera_group,
+                SOFTWARE_BD,
+                excluded_software_by_company,
+            ):
                 rows.append(
                     build_report_row(
                         issue_type="Missing BD",
@@ -898,6 +982,7 @@ def find_mac_overlap_pairs(
 
 def build_mac_direct_match_rows(
     pairs: Sequence[PotentialCandidate],
+    excluded_software_by_company: Mapping[str, set[str]],
 ) -> tuple[list[dict[str, str]], set[EndpointRecord], set[EndpointRecord]]:
     rows: list[dict[str, str]] = []
     handled_atera: set[EndpointRecord] = set()
@@ -909,7 +994,11 @@ def build_mac_direct_match_rows(
     for atera, atera_pairs in pairs_by_atera.items():
         matched_bd_records = [pair.bd for pair in atera_pairs]
         best_pairs = [pair for pair in atera_pairs if not bd_missing_best(pair.bd)]
-        if not best_pairs:
+        if not best_pairs and not any_record_excludes_software(
+            [atera],
+            SOFTWARE_BD,
+            excluded_software_by_company,
+        ):
             evidence = join_unique([pair.evidence for pair in atera_pairs])
             similarity = max(pair.similarity for pair in atera_pairs)
             rows.append(
@@ -961,6 +1050,7 @@ def format_similarity(value: float) -> str:
 
 def build_candidate_rows(
     candidates: Sequence[PotentialCandidate],
+    excluded_software_by_company: Mapping[str, set[str]],
 ) -> tuple[list[dict[str, str]], set[EndpointRecord], set[EndpointRecord]]:
     rows: list[dict[str, str]] = []
     handled_atera: set[EndpointRecord] = set()
@@ -970,16 +1060,21 @@ def build_candidate_rows(
 
     for candidate in candidates:
         if bd_missing_best(candidate.bd):
-            rows.append(
-                build_report_row(
-                    issue_type="Missing BD",
-                    atera_records=[candidate.atera],
-                    bd_records=[candidate.bd],
-                    missing_software="Bitdefender Endpoint Protection",
-                    match_evidence=f"{candidate.evidence}; BD endpoint is not managed with BEST",
-                    name_similarity=format_similarity(candidate.similarity),
+            if not any_record_excludes_software(
+                [candidate.atera],
+                SOFTWARE_BD,
+                excluded_software_by_company,
+            ):
+                rows.append(
+                    build_report_row(
+                        issue_type="Missing BD",
+                        atera_records=[candidate.atera],
+                        bd_records=[candidate.bd],
+                        missing_software="Bitdefender Endpoint Protection",
+                        match_evidence=f"{candidate.evidence}; BD endpoint is not managed with BEST",
+                        name_similarity=format_similarity(candidate.similarity),
+                    )
                 )
-            )
             handled_atera.add(candidate.atera)
             handled_bd.add(candidate.bd)
             continue
@@ -1008,10 +1103,12 @@ def compare_normalized_outputs(
     *,
     company_aliases: Mapping[str, str] | None = None,
     device_aliases: Mapping[tuple[str, str], str] | None = None,
+    excluded_software_by_company: Mapping[str, set[str]] | None = None,
     initial_data_quality_rows: Sequence[dict[str, str]] = (),
 ) -> CompareOutputs:
     company_aliases = company_aliases or {}
     device_aliases = device_aliases or {}
+    excluded_software_by_company = excluded_software_by_company or {}
     report_rows: list[dict[str, str]] = list(initial_data_quality_rows)
     duplicate_rows: list[dict[str, str]] = []
 
@@ -1022,7 +1119,7 @@ def compare_normalized_outputs(
     duplicate_rows.extend(find_duplicate_detail_rows(atera_records, bd_records))
 
     mac_pairs = find_mac_overlap_pairs(atera_records, bd_records)
-    mac_rows, mac_atera, mac_bd = build_mac_direct_match_rows(mac_pairs)
+    mac_rows, mac_atera, mac_bd = build_mac_direct_match_rows(mac_pairs, excluded_software_by_company)
     report_rows.extend(mac_rows)
     handled_atera: set[EndpointRecord] = set(mac_atera)
     handled_bd: set[EndpointRecord] = set(mac_bd)
@@ -1032,6 +1129,7 @@ def compare_normalized_outputs(
     primary_rows, primary_atera, primary_bd = classify_primary_matches(
         remaining_atera,
         remaining_bd,
+        excluded_software_by_company,
     )
     report_rows.extend(primary_rows)
     handled_atera.update(primary_atera)
@@ -1040,7 +1138,7 @@ def compare_normalized_outputs(
     unmatched_atera = [record for record in atera_records if record not in handled_atera]
     unmatched_bd = [record for record in bd_records if record not in handled_bd]
     candidates = find_potential_candidates(unmatched_atera, unmatched_bd)
-    candidate_rows, candidate_atera, candidate_bd = build_candidate_rows(candidates)
+    candidate_rows, candidate_atera, candidate_bd = build_candidate_rows(candidates, excluded_software_by_company)
     report_rows.extend(candidate_rows)
 
     handled_atera.update(candidate_atera)
@@ -1048,6 +1146,8 @@ def compare_normalized_outputs(
 
     for record in atera_records:
         if record in handled_atera:
+            continue
+        if company_excludes_software(record.company, SOFTWARE_BD, excluded_software_by_company):
             continue
         report_rows.append(
             build_report_row(
@@ -1061,6 +1161,8 @@ def compare_normalized_outputs(
         if record in handled_bd:
             continue
         if bd_missing_best(record):
+            continue
+        if company_excludes_software(record.company, SOFTWARE_ATERA, excluded_software_by_company):
             continue
         report_rows.append(
             build_report_row(
@@ -1079,6 +1181,7 @@ def compare_normalized_rows(
     *,
     company_aliases: Mapping[str, str] | None = None,
     device_aliases: Mapping[tuple[str, str], str] | None = None,
+    excluded_software_by_company: Mapping[str, set[str]] | None = None,
     initial_data_quality_rows: Sequence[dict[str, str]] = (),
 ) -> list[dict[str, str]]:
     return compare_normalized_outputs(
@@ -1086,6 +1189,7 @@ def compare_normalized_rows(
         bd_rows,
         company_aliases=company_aliases,
         device_aliases=device_aliases,
+        excluded_software_by_company=excluded_software_by_company,
         initial_data_quality_rows=initial_data_quality_rows,
     ).exception_rows
 
@@ -1098,15 +1202,22 @@ def compare_csvs(
     duplicates_output: str | Path = DEFAULT_DUPLICATES_OUTPUT_PATH,
     company_aliases: str | Path | None = None,
     device_aliases: str | Path | None = None,
+    exclude_company: str | Path | None = None,
 ) -> int:
     company_alias_map, company_alias_quality_rows = read_company_aliases(company_aliases)
     device_alias_map, device_alias_quality_rows = read_device_aliases(device_aliases, company_alias_map)
+    exclude_company_map, exclude_company_quality_rows = read_exclude_company(exclude_company, company_alias_map)
     outputs = compare_normalized_outputs(
         read_csv_rows(atera_csv, ATERA_CSV_COLUMNS),
         read_csv_rows(bd_csv, BD_COMPARE_REQUIRED_COLUMNS),
         company_aliases=company_alias_map,
         device_aliases=device_alias_map,
-        initial_data_quality_rows=[*company_alias_quality_rows, *device_alias_quality_rows],
+        excluded_software_by_company=exclude_company_map,
+        initial_data_quality_rows=[
+            *company_alias_quality_rows,
+            *device_alias_quality_rows,
+            *exclude_company_quality_rows,
+        ],
     )
     write_csv(output, COMPARE_REPORT_COLUMNS, outputs.exception_rows)
     write_csv(duplicates_output, DUPLICATE_REPORT_COLUMNS, outputs.duplicate_rows)
@@ -1157,6 +1268,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             f"Default: {DEFAULT_DEVICE_ALIASES_PATH} if it exists."
         ),
     )
+    parser.add_argument(
+        "--exclude-company",
+        type=Path,
+        default=DEFAULT_EXCLUDE_COMPANY_PATH,
+        help=(
+            "Optional company exclusion CSV with Company Name and ExcludeSoftware columns. "
+            f"Default: {DEFAULT_EXCLUDE_COMPANY_PATH} if it exists."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -1170,6 +1290,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             duplicates_output=args.duplicates_output,
             company_aliases=args.company_aliases,
             device_aliases=args.device_aliases,
+            exclude_company=args.exclude_company,
         )
         print(f"Wrote {count} mismatch row(s) to {args.output}")
         print(f"Wrote duplicate entry details to {args.duplicates_output}")

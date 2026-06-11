@@ -36,14 +36,14 @@ BD_API_KEY=your-bitdefender-api-key
 # BD_COMPANY_NAME=optional-company-name-for-output
 ```
 
-Run the executable, confirm the `.env` file and output folder, optionally adjust the Atera and Bitdefender page sizes, then click **Run**.
+Run the executable, confirm the `.env` file, output folder, and optional config CSV paths, then click **Run**.
 
-By default, the app writes these files under `data/` next to the executable:
+By default, the app writes these files under `output/` next to the executable:
 
-- `data/atera_agents.csv`
-- `data/bd_endpoint_status.csv`
-- `data/mismatch.csv`
-- `data/duplicates.csv`
+- `output/atera_agents.csv`
+- `output/bd_endpoint_status.csv`
+- `output/mismatch.csv`
+- `output/duplicates.csv`
 
 The UI also contains an **Include unprotected BD endpoints** checkbox. In the current code, the BD export already writes endpoint inventory with BEST status fields, and the compare stage decides whether an endpoint counts as protected. The flag remains wired through for compatibility with earlier behavior.
 
@@ -106,14 +106,15 @@ Important current rules:
 - Unparseable `Last Seen` values are kept as notes on the record; they only appear in reports if that record is otherwise reported.
 - `compare` still accepts older Bitdefender CSVs with only `Device Name`, `Company Name`, `IP Address`, and `Status`, although the generated BD CSV has many more columns.
 
-## Alias Files
+## Alias and Exclude Files
 
-Alias files are optional. Missing alias files are ignored.
+Alias and exclude files are optional. Missing files are ignored.
 
-For the desktop app, place them in the selected output folder. With default packaged paths, that means:
+For the desktop app, place them under `config/` next to the executable, browse to a custom CSV path in the UI, or use the **Create** button beside each config path to create a template CSV. With default packaged paths, that means:
 
-- `data/company_aliases.csv`
-- `data/device_aliases.csv`
+- `config/company_aliases.csv`
+- `config/device_aliases.csv`
+- `config/exclude_company.csv`
 
 `company_aliases.csv` must use these headers:
 
@@ -133,7 +134,17 @@ Example Bitdefender Name,DESKTOP-123,Accounting-01
 
 Device aliases are scoped by canonical company name. If a company alias exists, use the Bitdefender-side company name in `device_aliases.csv`.
 
-Incomplete alias rows do not abort comparison; they produce `Data Quality Review` rows in `mismatch.csv`.
+Incomplete alias or exclude rows do not abort comparison; they produce `Data Quality Review` rows in `mismatch.csv`.
+
+`exclude_company.csv` must use these headers:
+
+```csv
+Company Name,ExcludeSoftware
+Example Bitdefender Name,BD
+Example Bitdefender Name,Atera
+```
+
+Exclude company names are matched after company aliases are applied, so either the Atera-side alias or the Bitdefender-side company name can be used. `ExcludeSoftware` accepts `BD` or `Atera`: `BD` suppresses `Missing BD` rows for that company, and `Atera` suppresses `Missing Atera` rows for that company.
 
 ## CLI Commands
 
@@ -166,9 +177,9 @@ bd-atera-autocompare --env-file .env
 Run individual stages:
 
 ```powershell
-atera-export --env-file .env --output data/atera_agents.csv
-bd-prepare --env-file .env --output data/bd_endpoint_status.csv
-compare --atera-csv data/atera_agents.csv --bd-csv data/bd_endpoint_status.csv --output data/mismatch.csv --duplicates-output data/duplicates.csv
+atera-export --env-file .env --output output/atera_agents.csv
+bd-prepare --env-file .env --output output/bd_endpoint_status.csv
+compare --atera-csv output/atera_agents.csv --bd-csv output/bd_endpoint_status.csv --output output/mismatch.csv --duplicates-output output/duplicates.csv
 ```
 
 Useful CLI options include:
@@ -183,6 +194,7 @@ Useful CLI options include:
 - `--bd-no-scan-logs`
 - `--company-aliases`
 - `--device-aliases`
+- `--exclude-company`
 
 Use `--help` on any command for the full option list.
 

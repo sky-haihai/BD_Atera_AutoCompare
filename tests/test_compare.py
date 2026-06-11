@@ -115,6 +115,7 @@ class CompareTests(unittest.TestCase):
         *,
         company_alias_rows: list[dict[str, str]] | None = None,
         device_alias_rows: list[dict[str, str]] | None = None,
+        exclude_company_rows: list[dict[str, str]] | None = None,
     ) -> tuple[list[str] | None, list[dict[str, str]]]:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -135,6 +136,11 @@ class CompareTests(unittest.TestCase):
                 device_aliases = tmp_path / "device_aliases.csv"
                 write_csv_file(device_aliases, compare.DEVICE_ALIAS_COLUMNS, device_alias_rows)
 
+            exclude_company = None
+            if exclude_company_rows is not None:
+                exclude_company = tmp_path / "exclude_company.csv"
+                write_csv_file(exclude_company, compare.EXCLUDE_COMPANY_COLUMNS, exclude_company_rows)
+
             compare.compare_csvs(
                 atera_csv=atera_csv,
                 bd_csv=bd_csv,
@@ -142,6 +148,7 @@ class CompareTests(unittest.TestCase):
                 duplicates_output=duplicates_output,
                 company_aliases=company_aliases,
                 device_aliases=device_aliases,
+                exclude_company=exclude_company,
             )
             return read_report(output)
 
@@ -216,6 +223,38 @@ class CompareTests(unittest.TestCase):
         )
 
         self.assertEqual(rows, [])
+
+    def test_exclude_bd_suppresses_missing_bd_after_company_alias(self) -> None:
+        _, rows = self.run_compare(
+            [atera_row(company_name="Atera Acme")],
+            [bd_row(company_name="BD Acme", status="No BEST", managed_with_best="false")],
+            company_alias_rows=[{"Atera Company Name": "Atera Acme", "BD Company Name": "BD Acme"}],
+            exclude_company_rows=[{"Company Name": "Atera Acme", "ExcludeSoftware": "BD"}],
+        )
+
+        self.assertEqual(rows, [])
+
+    def test_exclude_bd_suppresses_unmatched_missing_bd_only(self) -> None:
+        _, rows = self.run_compare(
+            [atera_row(company_name="Acme", device_name="Atera-PC", ip_address="10.0.0.10")],
+            [bd_row(company_name="Acme", device_name="BD-PC", ip_address="10.0.0.20")],
+            exclude_company_rows=[{"Company Name": "Acme", "ExcludeSoftware": "BD"}],
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["Issue Type"], "Missing Atera")
+        self.assertEqual(rows[0]["BD Device Name"], "BD-PC")
+
+    def test_exclude_atera_suppresses_missing_atera_only(self) -> None:
+        _, rows = self.run_compare(
+            [atera_row(company_name="Acme", device_name="Atera-PC", ip_address="10.0.0.10")],
+            [bd_row(company_name="Acme", device_name="BD-PC", ip_address="10.0.0.20")],
+            exclude_company_rows=[{"Company Name": "Acme", "ExcludeSoftware": "Atera"}],
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["Issue Type"], "Missing BD")
+        self.assertEqual(rows[0]["Atera Device Name"], "Atera-PC")
 
     def test_device_alias_is_scoped_by_canonical_company(self) -> None:
         _, rows = self.run_compare(
@@ -701,6 +740,20 @@ class CompareTests(unittest.TestCase):
         self.assertTrue(any("Bd CSV row" in row["Notes"] for row in rows))
         self.assertTrue(any(row["BD Endpoint IDs"] == "bd-bad" for row in rows))
 
+    def test_bad_exclude_company_rows_output_data_quality(self) -> None:
+        _, rows = self.run_compare(
+            [],
+            [],
+            exclude_company_rows=[
+                {"Company Name": "Acme", "ExcludeSoftware": "Solaris"},
+                {"Company Name": "", "ExcludeSoftware": "BD"},
+            ],
+        )
+
+        self.assertEqual([row["Issue Type"] for row in rows], ["Data Quality Review", "Data Quality Review"])
+        self.assertTrue(any("ExcludeSoftware must be Atera or BD" in row["Notes"] for row in rows))
+        self.assertTrue(any("Company Name" in row["Notes"] for row in rows))
+
     def test_non_endpoint_inventory_rows_output_data_quality(self) -> None:
         _, rows = self.run_compare(
             [],
@@ -788,24 +841,30 @@ class CompareTests(unittest.TestCase):
         self.assertIn("Wrote 0 mismatch row", stdout.getvalue())
         self.assertIn("Wrote duplicate entry details", stdout.getvalue())
 
-    def test_parse_args_uses_data_folder_defaults(self) -> None:
+    def test_parse_args_uses_config_and_output_folder_defaults(self) -> None:
         args = compare.parse_args([])
 
-        self.assertEqual(args.atera_csv, Path("data/atera_agents.csv"))
-        self.assertEqual(args.bd_csv, Path("data/bd_endpoint_status.csv"))
-        self.assertEqual(args.output, Path("data/mismatch.csv"))
-        self.assertEqual(args.duplicates_output, Path("data/duplicates.csv"))
-        self.assertEqual(args.company_aliases, Path("data/company_aliases.csv"))
-        self.assertEqual(args.device_aliases, Path("data/device_aliases.csv"))
+        self.assertEqual(args.atera_csv, Path("output/atera_agents.csv"))
+        self.assertEqual(args.bd_csv, Path("output/bd_endpoint_status.csv"))
+        self.assertEqual(args.output, Path("output/mismatch.csv"))
+        self.assertEqual(args.duplicates_output, Path("output/duplicates.csv"))
+        self.assertEqual(args.company_aliases, Path("config/company_aliases.csv"))
+        self.assertEqual(args.device_aliases, Path("config/device_aliases.csv"))
+        self.assertEqual(args.exclude_company, Path("config/exclude_company.csv"))
 
     def test_missing_default_alias_files_are_ignored(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             missing_company_aliases = Path(tmp) / "missing_company_aliases.csv"
             missing_device_aliases = Path(tmp) / "missing_device_aliases.csv"
+            missing_exclude_company = Path(tmp) / "missing_exclude_company.csv"
 
             company_aliases, company_quality_rows = compare.read_company_aliases(missing_company_aliases)
             device_aliases, device_quality_rows = compare.read_device_aliases(
                 missing_device_aliases,
+                company_aliases,
+            )
+            exclude_company, exclude_quality_rows = compare.read_exclude_company(
+                missing_exclude_company,
                 company_aliases,
             )
 
@@ -813,6 +872,8 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(company_quality_rows, [])
         self.assertEqual(device_aliases, {})
         self.assertEqual(device_quality_rows, [])
+        self.assertEqual(exclude_company, {})
+        self.assertEqual(exclude_quality_rows, [])
 
     def test_main_returns_nonzero_for_missing_required_headers(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

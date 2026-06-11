@@ -54,12 +54,13 @@ class PipelineCliTests(unittest.TestCase):
     def test_parse_args_uses_full_pipeline_defaults(self) -> None:
         args = cli.parse_args([])
 
-        self.assertEqual(args.atera_output, Path("data/atera_agents.csv"))
-        self.assertEqual(args.bd_output, Path("data/bd_endpoint_status.csv"))
-        self.assertEqual(args.report_output, Path("data/mismatch.csv"))
-        self.assertEqual(args.duplicates_output, Path("data/duplicates.csv"))
-        self.assertEqual(args.company_aliases, Path("data/company_aliases.csv"))
-        self.assertEqual(args.device_aliases, Path("data/device_aliases.csv"))
+        self.assertEqual(args.atera_output, Path("output/atera_agents.csv"))
+        self.assertEqual(args.bd_output, Path("output/bd_endpoint_status.csv"))
+        self.assertEqual(args.report_output, Path("output/mismatch.csv"))
+        self.assertEqual(args.duplicates_output, Path("output/duplicates.csv"))
+        self.assertEqual(args.company_aliases, Path("config/company_aliases.csv"))
+        self.assertEqual(args.device_aliases, Path("config/device_aliases.csv"))
+        self.assertEqual(args.exclude_company, Path("config/exclude_company.csv"))
 
     def test_main_runs_atera_pull_bd_pull_and_compare_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -71,6 +72,7 @@ class PipelineCliTests(unittest.TestCase):
             duplicates_output = tmp_path / "reports" / "duplicates.csv"
             missing_company_aliases = tmp_path / "company_aliases.csv"
             missing_device_aliases = tmp_path / "device_aliases.csv"
+            missing_exclude_company = tmp_path / "exclude_company.csv"
 
             stdout = io.StringIO()
             with (
@@ -118,6 +120,8 @@ class PipelineCliTests(unittest.TestCase):
                         str(missing_company_aliases),
                         "--device-aliases",
                         str(missing_device_aliases),
+                        "--exclude-company",
+                        str(missing_exclude_company),
                     ]
                 )
 

@@ -5,7 +5,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-DEFAULT_OUTPUT_PATH = Path("data/atera_agents.csv")
+DEFAULT_OUTPUT_PATH = Path("output/atera_agents.csv")
 DEFAULT_ATERA_OUTPUT_PATH = DEFAULT_OUTPUT_PATH
 
 if __package__ in {None, ""}:
@@ -125,4 +125,3 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

@@ -7,13 +7,14 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from ..env_file import load_env_file
 from ..normalization import clean_display
-from .mapping import map_inventory_endpoint_item
+from .mapping import endpoint_last_seen, map_inventory_endpoint_item
 from .schema import BdNormalizedRow
 
 
@@ -46,6 +47,7 @@ class BdApiProvider:
         return_product_outdated: bool = True,
         include_scan_logs: bool = True,
         include_unprotected: bool = False,
+        endpoint_detail_workers: int = 8,
         urlopen: Callable[..., Any] | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
@@ -65,6 +67,7 @@ class BdApiProvider:
         self.return_product_outdated = return_product_outdated
         self.include_scan_logs = include_scan_logs
         self.include_unprotected = include_unprotected
+        self.endpoint_detail_workers = max(1, endpoint_detail_workers)
         self._urlopen = urlopen or urllib.request.urlopen
         self._sleep = sleep
 
@@ -98,9 +101,10 @@ class BdApiProvider:
         deleted_items = self.fetch_deleted_folder_items(deleted_group_ids)
         inventory_items = merge_inventory_items(inventory_items, deleted_items, deleted_group_ids)
         company_names_by_id = build_company_names_by_id(inventory_items)
+        endpoint_items = self.enrich_endpoint_last_seen(filter_endpoint_items(inventory_items))
         return [
             map_inventory_endpoint_item(item, company_names_by_id, self.company_name)
-            for item in filter_endpoint_items(inventory_items)
+            for item in endpoint_items
         ]
 
     def fetch_inventory_items(self) -> list[dict[str, Any]]:
@@ -172,6 +176,72 @@ class BdApiProvider:
     def fetch_endpoint_items(self) -> list[dict[str, Any]]:
         """Fetch inventory endpoint items; kept as a convenience for callers."""
         return filter_endpoint_items(self.fetch_inventory_items())
+
+    def fetch_managed_endpoint_details(self, endpoint_id: str) -> dict[str, Any]:
+        """Fetch getManagedEndpointDetails for one endpoint."""
+        payload = {
+            "jsonrpc": "2.0",
+            "method": "getManagedEndpointDetails",
+            "params": {"endpointId": clean_display(endpoint_id)},
+            "id": str(uuid4()),
+        }
+        result = extract_jsonrpc_result(self.request_json(payload))
+        return dict(result) if isinstance(result, Mapping) else {}
+
+    def enrich_endpoint_last_seen(self, endpoint_items: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Fill missing inventory last-seen values from endpoint details."""
+        output: list[dict[str, Any] | None] = []
+        fetch_positions: list[int] = []
+        fetch_items: list[dict[str, Any]] = []
+
+        for item in endpoint_items:
+            if endpoint_last_seen(item, inventory_item_details(item)):
+                output.append(item)
+                continue
+
+            endpoint_id = clean_display(item.get("id"))
+            if not endpoint_id:
+                output.append(item)
+                continue
+
+            fetch_positions.append(len(output))
+            fetch_items.append(item)
+            output.append(None)
+
+        if not fetch_items:
+            return [item for item in output if item is not None]
+
+        if self.endpoint_detail_workers == 1 or len(fetch_items) == 1:
+            enriched_items = [self._enrich_endpoint_last_seen_item(item) for item in fetch_items]
+        else:
+            workers = min(self.endpoint_detail_workers, len(fetch_items))
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                enriched_items = list(executor.map(self._enrich_endpoint_last_seen_item, fetch_items))
+
+        for position, item in zip(fetch_positions, enriched_items):
+            output[position] = item
+
+        return [item for item in output if item is not None]
+
+    def _enrich_endpoint_last_seen_item(self, item: dict[str, Any]) -> dict[str, Any]:
+        endpoint_id = clean_display(item.get("id"))
+        if not endpoint_id:
+            return item
+
+        try:
+            details = self.fetch_managed_endpoint_details(endpoint_id)
+        except RuntimeError as exc:
+            if "Invalid params" not in str(exc):
+                raise
+            return item
+
+        last_seen = clean_display(details.get("lastSeen"))
+        if not last_seen:
+            return item
+
+        enriched = dict(item)
+        enriched["lastSeen"] = last_seen
+        return enriched
 
     def request_json(self, payload: Mapping[str, Any]) -> Any:
         """POST one JSON-RPC payload to the Bitdefender Network API."""

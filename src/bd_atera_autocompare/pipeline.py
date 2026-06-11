@@ -20,6 +20,7 @@ from .compare import (
     DEFAULT_COMPANY_ALIASES_PATH,
     DEFAULT_DEVICE_ALIASES_PATH,
     DEFAULT_DUPLICATES_OUTPUT_PATH,
+    DEFAULT_EXCLUDE_COMPANY_PATH,
     DEFAULT_OUTPUT_PATH as DEFAULT_COMPARE_OUTPUT_PATH,
     compare_csvs,
 )
@@ -46,6 +47,7 @@ class PipelineSettings:
     duplicates_output: Path = DEFAULT_DUPLICATES_OUTPUT_PATH
     company_aliases: Path | None = DEFAULT_COMPANY_ALIASES_PATH
     device_aliases: Path | None = DEFAULT_DEVICE_ALIASES_PATH
+    exclude_company: Path | None = DEFAULT_EXCLUDE_COMPANY_PATH
 
 
 @dataclass(frozen=True)
@@ -110,6 +112,7 @@ def run_pipeline(
         duplicates_output=settings.duplicates_output,
         company_aliases=settings.company_aliases,
         device_aliases=settings.device_aliases,
+        exclude_company=settings.exclude_company,
     )
     emit_status(status, f"Wrote {mismatch_rows} mismatch row(s) to {settings.report_output}")
     emit_status(status, f"Wrote duplicate entry details to {settings.duplicates_output}")
@@ -135,6 +138,7 @@ __all__ = [
     "DEFAULT_COMPARE_OUTPUT_PATH",
     "DEFAULT_DEVICE_ALIASES_PATH",
     "DEFAULT_DUPLICATES_OUTPUT_PATH",
+    "DEFAULT_EXCLUDE_COMPANY_PATH",
     "PipelineResult",
     "PipelineSettings",
     "bd_provider_from_settings",

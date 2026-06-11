@@ -69,6 +69,7 @@ class PipelineTests(unittest.TestCase):
                 duplicates_output=tmp_path / "duplicates.csv",
                 company_aliases=tmp_path / "company_aliases.csv",
                 device_aliases=tmp_path / "device_aliases.csv",
+                exclude_company=tmp_path / "exclude_company.csv",
             )
             messages: list[str] = []
 
