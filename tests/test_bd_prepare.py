@@ -353,6 +353,7 @@ class BdPrepareTests(unittest.TestCase):
                 api_payload([company_item(), endpoint_item(name="PC01")], page=1, pages_count=2, has_more_records=True),
                 api_payload([endpoint_item(name="PC02")], page=2, pages_count=2, has_more_records=False),
                 custom_groups_payload(),
+                custom_groups_payload(),
             ]
         )
         provider = bd_api.BdApiProvider(
@@ -382,6 +383,7 @@ class BdPrepareTests(unittest.TestCase):
                     ]
                 ),
                 custom_groups_payload(),
+                custom_groups_payload(),
             ]
         )
         provider = bd_api.BdApiProvider(api_key="secret", urlopen=urlopen)
@@ -402,6 +404,7 @@ class BdPrepareTests(unittest.TestCase):
                         endpoint_item(name="NO-BEST", managed_with_best=False, endpoint_id="no-best"),
                     ]
                 ),
+                custom_groups_payload(),
                 custom_groups_payload(),
             ]
         )
@@ -445,7 +448,7 @@ class BdPrepareTests(unittest.TestCase):
         self.assertEqual(custom_groups_body["params"]["parentId"], "company-1")
         self.assertEqual(deleted_inventory_body["method"], "getNetworkInventoryItems")
         self.assertEqual(deleted_inventory_body["params"]["parentId"], "deleted-group")
-        self.assertEqual(deleted_inventory_body["params"]["perPage"], 1000)
+        self.assertEqual(deleted_inventory_body["params"]["perPage"], 100)
         self.assertEqual(
             deleted_inventory_body["params"]["filters"],
             {
@@ -457,6 +460,43 @@ class BdPrepareTests(unittest.TestCase):
                 "depth": {"allItemsRecursively": True},
             },
         )
+
+    def test_provider_checks_each_company_deleted_folder_without_configured_parent(self) -> None:
+        urlopen = FakeUrlopen(
+            [
+                api_payload([company_item(), endpoint_item(name="LIVE", endpoint_id="live")]),
+                custom_groups_payload(),
+                custom_groups_payload([{"id": "company-deleted-group", "name": "Deleted"}]),
+                api_payload(
+                    [
+                        endpoint_item(
+                            name="COMPANY-DELETED",
+                            endpoint_id="company-deleted",
+                            parent_id="company-deleted-group",
+                        )
+                    ]
+                ),
+            ]
+        )
+        provider = bd_api.BdApiProvider(
+            api_key="secret",
+            company_name="Acme",
+            urlopen=urlopen,
+        )
+
+        rows = provider.get_rows()
+
+        self.assertEqual([row.device_name for row in rows], ["LIVE", "COMPANY-DELETED"])
+        self.assertEqual(rows[0].is_in_deleted_folder, "")
+        self.assertEqual(rows[1].is_in_deleted_folder, "true")
+        root_groups_body = json.loads(urlopen.requests[1].data.decode("utf-8"))
+        company_groups_body = json.loads(urlopen.requests[2].data.decode("utf-8"))
+        deleted_inventory_body = json.loads(urlopen.requests[3].data.decode("utf-8"))
+        self.assertEqual(root_groups_body["method"], "getCustomGroupsList")
+        self.assertIsNone(root_groups_body["params"]["parentId"])
+        self.assertEqual(company_groups_body["method"], "getCustomGroupsList")
+        self.assertEqual(company_groups_body["params"]["parentId"], "company-1")
+        self.assertEqual(deleted_inventory_body["params"]["parentId"], "company-deleted-group")
 
     def test_extract_result_raises_for_jsonrpc_error(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "Authorization error"):

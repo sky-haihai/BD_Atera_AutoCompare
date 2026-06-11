@@ -20,7 +20,7 @@ from .schema import BdNormalizedRow
 DEFAULT_BD_API_URL = "https://cloud.gravityzone.bitdefender.com/api/v1.0/jsonrpc/network"
 DEFAULT_BD_USER_AGENT = "BD-Atera-AutoCompare/0.1"
 DEFAULT_PAGE_SIZE = 100
-DELETED_FOLDER_PAGE_SIZE = 1000
+DELETED_FOLDER_PAGE_SIZE = DEFAULT_PAGE_SIZE
 DELETED_FOLDER_NAME = "Deleted"
 MAX_BD_PAGES = 1000
 TRANSIENT_HTTP_CODES = {429, 500, 502, 503, 504}
@@ -94,9 +94,9 @@ class BdApiProvider:
     def get_rows(self) -> list[BdNormalizedRow]:
         """Fetch endpoint inventory and map it to normalized BD rows."""
         inventory_items = self.fetch_inventory_items()
-        deleted_group_id = self.fetch_deleted_folder_id()
-        deleted_items = self.fetch_deleted_folder_items(deleted_group_id) if deleted_group_id else []
-        inventory_items = merge_inventory_items(inventory_items, deleted_items, deleted_group_id)
+        deleted_group_ids = self.fetch_deleted_folder_ids(inventory_items)
+        deleted_items = self.fetch_deleted_folder_items(deleted_group_ids)
+        inventory_items = merge_inventory_items(inventory_items, deleted_items, deleted_group_ids)
         company_names_by_id = build_company_names_by_id(inventory_items)
         return [
             map_inventory_endpoint_item(item, company_names_by_id, self.company_name)
@@ -107,25 +107,42 @@ class BdApiProvider:
         """Fetch all getNetworkInventoryItems pages as raw inventory dictionaries."""
         return self._fetch_inventory_pages(self._request_payload, self.page_size)
 
-    def fetch_deleted_folder_id(self) -> str:
-        """Return the custom group ID named Deleted, or blank when the folder is absent."""
-        payload = self.request_json(self._custom_groups_payload())
-        result = extract_jsonrpc_result(payload)
-        return find_deleted_group_id(extract_custom_group_items(result))
+    def fetch_deleted_folder_ids(self, inventory_items: Sequence[dict[str, Any]] = ()) -> tuple[str, ...]:
+        """Return Deleted custom group IDs for the configured tenant scope."""
+        deleted_group_ids: list[str] = []
+        seen: set[str] = set()
 
-    def fetch_deleted_folder_items(self, deleted_group_id: str) -> list[dict[str, Any]]:
-        """Fetch all endpoint items under the Deleted custom group."""
-        clean_deleted_group_id = clean_display(deleted_group_id)
-        if not clean_deleted_group_id:
-            return []
+        for parent_id in deleted_folder_parent_ids(inventory_items, self.parent_id):
+            payload = self.request_json(self._custom_groups_payload(parent_id))
+            result = extract_jsonrpc_result(payload)
+            deleted_group_id = find_deleted_group_id(extract_custom_group_items(result))
+            if not deleted_group_id or deleted_group_id in seen:
+                continue
+            deleted_group_ids.append(deleted_group_id)
+            seen.add(deleted_group_id)
 
-        return [
-            mark_deleted_folder_item(item)
-            for item in self._fetch_inventory_pages(
-                lambda page: self._deleted_folder_request_payload(clean_deleted_group_id, page),
-                DELETED_FOLDER_PAGE_SIZE,
+        return tuple(deleted_group_ids)
+
+    def fetch_deleted_folder_items(self, deleted_group_ids: Sequence[str]) -> list[dict[str, Any]]:
+        """Fetch all endpoint items under one or more Deleted custom groups."""
+        output: list[dict[str, Any]] = []
+        for deleted_group_id in deleted_group_ids:
+            clean_deleted_group_id = clean_display(deleted_group_id)
+            if not clean_deleted_group_id:
+                continue
+
+            output.extend(
+                mark_deleted_folder_item(item)
+                for item in self._fetch_inventory_pages(
+                    lambda page, group_id=clean_deleted_group_id: self._deleted_folder_request_payload(
+                        group_id,
+                        page,
+                    ),
+                    DELETED_FOLDER_PAGE_SIZE,
+                )
             )
-        ]
+
+        return output
 
     def _fetch_inventory_pages(
         self,
@@ -223,11 +240,11 @@ class BdApiProvider:
             "id": str(uuid4()),
         }
 
-    def _custom_groups_payload(self) -> dict[str, Any]:
+    def _custom_groups_payload(self, parent_id: str = "") -> dict[str, Any]:
         return {
             "jsonrpc": "2.0",
             "method": "getCustomGroupsList",
-            "params": {"parentId": self.parent_id or None},
+            "params": {"parentId": clean_display(parent_id) or None},
             "id": str(uuid4()),
         }
 
@@ -318,6 +335,28 @@ def find_deleted_group_id(groups: list[dict[str, Any]]) -> str:
     return ""
 
 
+def deleted_folder_parent_ids(
+    inventory_items: Sequence[Mapping[str, Any]],
+    configured_parent_id: str = "",
+) -> tuple[str, ...]:
+    """Return parent IDs to check for a Deleted custom group."""
+    configured_parent_id = clean_display(configured_parent_id)
+    if configured_parent_id:
+        return (configured_parent_id,)
+
+    output: list[str] = [""]
+    seen: set[str] = {""}
+    for item in inventory_items:
+        if clean_display(item.get("type")) != COMPANY_ITEM_TYPE_KEY:
+            continue
+        item_id = clean_display(item.get("id"))
+        if not item_id or item_id in seen:
+            continue
+        output.append(item_id)
+        seen.add(item_id)
+    return tuple(output)
+
+
 def extract_inventory_items(result: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Return getNetworkInventoryItems items from a result object."""
     items = result.get("items")
@@ -361,11 +400,16 @@ def mark_deleted_folder_item(item: Mapping[str, Any]) -> dict[str, Any]:
 
 def mark_deleted_folder_membership(
     item: Mapping[str, Any],
-    deleted_group_id: str = "",
+    deleted_group_ids: str | Sequence[str] = "",
 ) -> dict[str, Any]:
     """Return an inventory item copy with Deleted-folder membership normalized."""
     output = dict(item)
-    if is_item_in_deleted_folder(output, deleted_group_id):
+    if isinstance(deleted_group_ids, str):
+        group_ids = (deleted_group_ids,)
+    else:
+        group_ids = tuple(deleted_group_ids)
+
+    if any(is_item_in_deleted_folder(output, deleted_group_id) for deleted_group_id in group_ids):
         output["isInDeletedFolder"] = True
     return output
 
@@ -373,14 +417,14 @@ def mark_deleted_folder_membership(
 def merge_inventory_items(
     inventory_items: Sequence[dict[str, Any]],
     deleted_folder_items: Sequence[dict[str, Any]],
-    deleted_group_id: str = "",
+    deleted_group_ids: str | Sequence[str] = "",
 ) -> list[dict[str, Any]]:
     """Merge regular inventory and Deleted-folder endpoint queries by item ID."""
     output: list[dict[str, Any]] = []
     items_by_id: dict[str, dict[str, Any]] = {}
 
     for item in inventory_items:
-        copied = mark_deleted_folder_membership(item, deleted_group_id)
+        copied = mark_deleted_folder_membership(item, deleted_group_ids)
         item_id = clean_display(copied.get("id"))
         output.append(copied)
         if item_id:
